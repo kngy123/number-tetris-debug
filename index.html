@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数字テトリス</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .game-container {
+            touch-action: manipulation;
+        }
+        .block {
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-sizing: border-box;
+            position: absolute;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            user-select: none;
+        }
+        .controls button {
+            touch-action: manipulation;
+        }
+        @keyframes flash {
+            0% { opacity: 1; }
+            50% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+        .flash {
+            animation: flash 0.3s 2;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4">
+    <div class="text-center mb-4">
+        <h1 class="text-3xl font-bold mb-2">数字テトリス</h1>
+        <p class="text-gray-300 mb-4">隣り合う数字の合計が10になると消えます</p>
+        <div class="flex justify-between w-full max-w-md mx-auto mb-4">
+            <div class="text-left">
+                <p>スコア: <span id="score">0</span></p>
+                <p>レベル: <span id="level">1</span></p>
+            </div>
+            <div class="text-right">
+                <p>次のミノ:</p>
+                <div id="next-piece" class="inline-block"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="relative game-container bg-gray-800 border-2 border-gray-700 mb-4" id="game-board">
+        <!-- ゲームボードはJavaScriptで動的に生成 -->
+    </div>
+
+    <div class="controls flex flex-col items-center w-full max-w-md">
+        <div class="grid grid-cols-3 gap-2 mb-4 w-full">
+            <button id="left" class="bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg">←</button>
+            <button id="rotate" class="bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-lg">回転</button>
+            <button id="right" class="bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg">→</button>
+        </div>
+        <div class="w-full">
+            <button id="down" class="bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg w-full mb-2">↓ 速く落下</button>
+            <button id="drop" class="bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg w-full">一気に落下</button>
+        </div>
+    </div>
+
+    <div id="game-over" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center">
+        <div class="bg-gray-800 p-8 rounded-lg text-center max-w-md w-full">
+            <h2 class="text-2xl font-bold mb-4">ゲームオーバー</h2>
+            <p class="mb-4">最終スコア: <span id="final-score">0</span></p>
+            <button id="restart" class="bg-blue-600 hover:bg-blue-700 text-white py-2 px-6 rounded-lg">もう一度遊ぶ</button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // ゲーム設定
+            const COLS = 10;
+            const ROWS = 20;
+            const BLOCK_SIZE = 30;
+            const COLORS = [
+                '#FF5252', '#FF4081', '#E040FB', '#7C4DFF', 
+                '#536DFE', '#448AFF', '#40C4FF', '#18FFFF', 
+                '#64FFDA', '#69F0AE', '#B2FF59', '#EEFF41', 
+                '#FFFF00', '#FFD740', '#FFAB40', '#FF6E40'
+            ];
+            
+            // ゲーム状態
+            let board = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+            let currentPiece = null;
+            let nextPiece = null;
+            let score = 0;
+            let level = 1;
+            let gameOver = false;
+            let dropInterval = 1000; // ミリ秒
+            let dropStart;
+            let lastDrop = 0;
+            let touchStartX = 0;
+            let touchStartY = 0;
+            let isProcessing = false; // 処理中フラグ
+            
+            // DOM要素
+            const gameBoard = document.getElementById('game-board');
+            const scoreElement = document.getElementById('score');
+            const levelElement = document.getElementById('level');
+            const nextPieceElement = document.getElementById('next-piece');
+            const gameOverElement = document.getElementById('game-over');
+            const finalScoreElement = document.getElementById('final-score');
+            
+            // ボードのサイズ設定
+            gameBoard.style.width = `${COLS * BLOCK_SIZE}px`;
+            gameBoard.style.height = `${ROWS * BLOCK_SIZE}px`;
+            
+            // ミノの形状と数字
+            const PIECES = [
+                { 
+                    shape: [[1, 1, 1, 1]], 
+                    numbers: [1, 2, 3, 4],
+                    name: 'I' 
+                }, // I
+                { 
+                    shape: [[1, 1], [1, 1]], 
+                    numbers: [5, 6, 7, 8],
+                    name: 'O' 
+                }, // O
+                { 
+                    shape: [[0, 1, 0], [1, 1, 1]], 
+                    numbers: [9, 0, 1, 2],
+                    name: 'T' 
+                }, // T
+                { 
+                    shape: [[1, 1, 0], [0, 1, 1]], 
+                    numbers: [3, 4, 5, 6],
+                    name: 'S' 
+                }, // S
+                { 
+                    shape: [[0, 1, 1], [1, 1, 0]], 
+                    numbers: [7, 8, 9, 0],
+                    name: 'Z' 
+                }, // Z
+                { 
+                    shape: [[1, 0, 0], [1, 1, 1]], 
+                    numbers: [1, 2, 3, 4],
+                    name: 'L' 
+                }, // L
+                { 
+                    shape: [[0, 0, 1], [1, 1, 1]], 
+                    numbers: [5, 6, 7, 8],
+                    name: 'J' 
+                }  // J
+            ];
+            
+            // ゲーム初期化
+            function init() {
+                board = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+                score = 0;
+                level = 1;
+                gameOver = false;
+                isProcessing = false;
+                dropInterval = 1000;
+                updateScore();
+                generatePiece();
+                drawBoard();
+                dropStart = Date.now();
+                lastDrop = dropStart;
+                gameOverElement.classList.add('hidden');
+                
+                // ゲームループ開始
+                requestAnimationFrame(gameLoop);
+            }
+            
+            // ゲームループ
+            function gameLoop(timestamp) {
+                if (gameOver) return;
+                
+                const now = Date.now();
+                const delta = now - lastDrop;
+                
+                if (delta > dropInterval && !isProcessing) {
+                    moveDown();
+                    lastDrop = now - (delta % dropInterval);
+                }
+                
+                drawBoard();
+                requestAnimationFrame(gameLoop);
+            }
+            
+            // 新しいミノを生成
+            function generatePiece() {
+                if (!nextPiece) {
+                    nextPiece = getRandomPiece();
+                }
+                
+                currentPiece = nextPiece;
+                nextPiece = getRandomPiece();
+                drawNextPiece();
+                
+                // ゲームオーバーチェック
+                if (collision(0, 0)) {
+                    gameOver = true;
+                    finalScoreElement.textContent = score;
+                    gameOverElement.classList.remove('hidden');
+                }
+            }
+            
+            // ランダムなミノを取得
+            function getRandomPiece() {
+                const randomIndex = Math.floor(Math.random() * PIECES.length);
+                const piece = PIECES[randomIndex];
+                
+                // 数字配列を正しくコピー
+                const numbers = [...piece.numbers].map(num => {
+                    // NaNを防ぐために数値に変換
+                    const n = Number(num);
+                    return isNaN(n) ? 0 : n;
+                });
+                
+                // ミノの位置と回転状態
+                const newPiece = {
+                    shape: piece.shape,
+                    numbers: numbers,
+                    x: Math.floor(COLS / 2) - Math.floor(piece.shape[0].length / 2),
+                    y: 0,
+                    rotation: 0,
+                    name: piece.name
+                };
+                
+                return newPiece;
+            }
+            
+            // 衝突判定
+            function collision(offsetX, offsetY, newShape = null) {
+                const shape = newShape || currentPiece.shape;
+                
+                for (let y = 0; y < shape.length; y++) {
+                    for (let x = 0; x < shape[y].length; x++) {
+                        if (shape[y][x]) {
+                            const newX = currentPiece.x + x + offsetX;
+                            const newY = currentPiece.y + y + offsetY;
+                            
+                            if (
+                                newX < 0 || 
+                                newX >= COLS || 
+                                newY >= ROWS ||
+                                (newY >= 0 && board[newY][newX])
+                            ) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return false;
+            }
+            
+            // ミノをボードに固定
+            function lockPiece() {
+                if (isProcessing) return;
+                isProcessing = true;
+                
+                for (let y = 0; y < currentPiece.shape.length; y++) {
+                    for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                        if (currentPiece.shape[y][x]) {
+                            const boardY = currentPiece.y + y;
+                            const boardX = currentPiece.x + x;
+                            
+                            if (boardY >= 0) {
+                                // 数字を保存 (0-9の範囲で循環)
+                                const numIndex = y * currentPiece.shape[0].length + x;
+                                let num = currentPiece.numbers[numIndex] % 10;
+                                // NaNを防ぐ
+                                num = isNaN(num) ? 0 : num;
+                                board[boardY][boardX] = {
+                                    color: COLORS[num],
+                                    number: num
+                                };
+                            }
+                        }
+                    }
+                }
+                
+                // 横一列が揃っているかチェック
+                checkFullRows();
+                
+                // 消去可能なブロックをチェック
+                checkMatches();
+                
+                // 新しいミノを生成
+                generatePiece();
+                isProcessing = false;
+            }
+            
+            // 横一列が揃っているかチェック
+            function checkFullRows() {
+                let rowsToClear = [];
+                
+                // 下から上にチェック
+                for (let y = ROWS - 1; y >= 0; y--) {
+                    let rowFull = true;
+                    for (let x = 0; x < COLS; x++) {
+                        if (!board[y][x]) {
+                            rowFull = false;
+                            break;
+                        }
+                    }
+                    
+                    if (rowFull) {
+                        rowsToClear.push(y);
+                    }
+                }
+                
+                if (rowsToClear.length > 0) {
+                    // 行を消去
+                    for (const row of rowsToClear) {
+                        for (let x = 0; x < COLS; x++) {
+                            board[row][x] = 0;
+                        }
+                    }
+                    
+                    // スコア加算 (1行100点、2行300点、3行500点、4行800点)
+                    const linePoints = [0, 100, 300, 500, 800];
+                    score += linePoints[rowsToClear.length] * level;
+                    updateScore();
+                    
+                    // ブロックを落下させる
+                    dropBlocksAfterClear(rowsToClear);
+                    
+                    // 消えた行を点滅させる
+                    flashRows(rowsToClear);
+                }
+            }
+            
+            // 行を消した後にブロックを落下させる
+            function dropBlocksAfterClear(clearedRows) {
+                // 消去された行をソート
+                clearedRows.sort((a, b) => a - b);
+                
+                // 各消去行に対して、その上のブロックを落下させる
+                for (const row of clearedRows) {
+                    // 上の行を1つずつ下に移動
+                    for (let y = row; y > 0; y--) {
+                        for (let x = 0; x < COLS; x++) {
+                            board[y][x] = board[y-1][x];
+                        }
+                    }
+                    
+                    // 最上行を空にする
+                    for (let x = 0; x < COLS; x++) {
+                        board[0][x] = 0;
+                    }
+                }
+            }
+            
+            // 消えた行を点滅させる
+            function flashRows(rows) {
+                // 一時的にボードをコピー
+                const tempBoard = JSON.parse(JSON.stringify(board));
+                
+                // 消えた行を一時的に非表示
+                for (const row of rows) {
+                    for (let x = 0; x < COLS; x++) {
+                        board[row][x] = 0;
+                    }
+                }
+                
+                // ボードを再描画
+                drawBoard();
+                
+                // 300ms後に元に戻す
+                setTimeout(() => {
+                    // 消えた行はそのまま空にする
+                    drawBoard();
+                }, 300);
+            }
+            
+            // 合計が10になる隣接ブロックをチェック
+            function checkMatches() {
+                const directions = [
+                    { dx: 1, dy: 0 },  // 右
+                    { dx: 0, dy: 1 },  // 下
+                    { dx: -1, dy: 0 }, // 左
+                    { dx: 0, dy: -1 }  // 上
+                ];
+                
+                let matchedBlocks = [];
+                let hasMatches = false;
+                
+                // すべてのブロックをチェック
+                for (let y = 0; y < ROWS; y++) {
+                    for (let x = 0; x < COLS; x++) {
+                        if (board[y][x]) {
+                            const currentNum = board[y][x].number;
+                            
+                            // 4方向をチェック
+                            for (const dir of directions) {
+                                const nx = x + dir.dx;
+                                const ny = y + dir.dy;
+                                
+                                if (
+                                    nx >= 0 && nx < COLS && 
+                                    ny >= 0 && ny < ROWS && 
+                                    board[ny][nx]
+                                ) {
+                                    const neighborNum = board[ny][nx].number;
+                                    
+                                    if ((currentNum + neighborNum) === 10) {
+                                        // マッチしたブロックを記録 (重複防止)
+                                        if (!matchedBlocks.some(b => b.x === x && b.y === y)) {
+                                            matchedBlocks.push({ x, y });
+                                        }
+                                        if (!matchedBlocks.some(b => b.x === nx && b.y === ny)) {
+                                            matchedBlocks.push({ x: nx, y: ny });
+                                        }
+                                        hasMatches = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (hasMatches) {
+                    // マッチしたブロックを消去
+                    for (const block of matchedBlocks) {
+                        board[block.y][block.x] = 0;
+                    }
+                    
+                    // スコア加算
+                    score += matchedBlocks.length * 10 * level;
+                    updateScore();
+                    
+                    // ブロックを落下させる
+                    dropBlocks();
+                    
+                    // マッチしたブロックを点滅させる
+                    flashBlocks(matchedBlocks);
+                    
+                    // 再帰的にチェック (連鎖反応)
+                    setTimeout(() => {
+                        checkMatches();
+                    }, 500);
+                } else {
+                    isProcessing = false;
+                }
+            }
+            
+            // ブロックを落下させる
+            function dropBlocks() {
+                // 下から上にスキャン
+                for (let y = ROWS - 1; y >= 0; y--) {
+                    for (let x = 0; x < COLS; x++) {
+                        if (board[y][x] === 0) {
+                            // 上の行からブロックを探して落下させる
+                            for (let ny = y - 1; ny >= 0; ny--) {
+                                if (board[ny][x]) {
+                                    board[y][x] = board[ny][x];
+                                    board[ny][x] = 0;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // マッチしたブロックを点滅させる
+            function flashBlocks(blocks) {
+                // 一時的にボードをコピー
+                const tempBoard = JSON.parse(JSON.stringify(board));
+                
+                // マッチしたブロックを一時的に非表示
+                for (const block of blocks) {
+                    if (board[block.y] && board[block.y][block.x]) {
+                        board[block.y][block.x] = 0;
+                    }
+                }
+                
+                // ボードを再描画
+                drawBoard();
+                
+                // 300ms後に元に戻す
+                setTimeout(() => {
+                    // マッチしたブロックを完全に削除
+                    for (const block of blocks) {
+                        if (board[block.y] && board[block.y][block.x]) {
+                            board[block.y][block.x] = 0;
+                        }
+                    }
+                    drawBoard();
+                }, 300);
+            }
+            
+            // ミノを移動
+            function movePiece(offsetX, offsetY) {
+                if (gameOver || isProcessing) return false;
+                
+                if (!collision(offsetX, offsetY)) {
+                    currentPiece.x += offsetX;
+                    currentPiece.y += offsetY;
+                    return true;
+                }
+                return false;
+            }
+            
+            // ミノを回転
+            function rotatePiece() {
+                if (gameOver || isProcessing) return;
+                
+                const originalShape = currentPiece.shape;
+                const originalNumbers = currentPiece.numbers;
+                
+                // Oブロック（正方形）は回転しない
+                if (currentPiece.name === 'O') {
+                    return;
+                }
+                
+                // 新しい形状を計算 (時計回りに90度回転)
+                const rows = originalShape.length;
+                const cols = originalShape[0].length;
+                const newShape = Array(cols).fill().map(() => Array(rows).fill(0));
+                
+                // 数字を保持するための一時配列
+                const tempNumbers = [];
+                
+                // 元の形状から数字を収集
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        if (originalShape[y][x]) {
+                            const numIndex = y * cols + x;
+                            tempNumbers.push(originalNumbers[numIndex]);
+                        }
+                    }
+                }
+                
+                // 新しい形状を作成
+                const newNumbers = [];
+                
+                // 数字の配置を合理的に変更
+                if (currentPiece.name === 'I') {
+                    // Iブロックの回転処理
+                    if (rows === 1) {
+                        // 横から縦に回転
+                        newNumbers[0] = tempNumbers[0];
+                        newNumbers[1] = tempNumbers[1];
+                        newNumbers[2] = tempNumbers[2];
+                        newNumbers[3] = tempNumbers[3];
+                    } else {
+                        // 縦から横に回転
+                        newNumbers[0] = tempNumbers[0];
+                        newNumbers[1] = tempNumbers[1];
+                        newNumbers[2] = tempNumbers[2];
+                        newNumbers[3] = tempNumbers[3];
+                    }
+                } else if (currentPiece.name === 'T') {
+                    // Tブロックの回転処理
+                    if (rows === 2) {
+                        // 通常のTから右回転
+                        newNumbers[0] = tempNumbers[1];
+                        newNumbers[1] = tempNumbers[3];
+                        newNumbers[2] = tempNumbers[2];
+                        newNumbers[3] = tempNumbers[0];
+                    } else {
+                        // 右回転から通常のTに
+                        newNumbers[0] = tempNumbers[3];
+                        newNumbers[1] = tempNumbers[0];
+                        newNumbers[2] = tempNumbers[2];
+                        newNumbers[3] = tempNumbers[1];
+                    }
+                } else if (currentPiece.name === 'S') {
+                    // Sブロックの回転処理
+                    if (rows === 2) {
+                        // 通常のSから右回転
+                        newNumbers[0] = tempNumbers[1];
+                        newNumbers[1] = tempNumbers[3];
+                        newNumbers[2] = tempNumbers[0];
+                        newNumbers[3] = tempNumbers[2];
+                    } else {
+                        // 右回転から通常のSに
+                        newNumbers[0] = tempNumbers[2];
+                        newNumbers[1] = tempNumbers[0];
+                        newNumbers[2] = tempNumbers[3];
+                        newNumbers[3] = tempNumbers[1];
+                    }
+                } else if (currentPiece.name === 'Z') {
+                    // Zブロックの回転処理
+                    if (rows === 2) {
+                        // 通常のZから右回転
+                        newNumbers[0] = tempNumbers[1];
+                        newNumbers[1] = tempNumbers[3];
+                        newNumbers[2] = tempNumbers[0];
+                        newNumbers[3] = tempNumbers[2];
+                    } else {
+                        // 右回転から通常のZに
+                        newNumbers[0] = tempNumbers[2];
+                        newNumbers[1] = tempNumbers[0];
+                        newNumbers[2] = tempNumbers[3];
+                        newNumbers[3] = tempNumbers[1];
+                    }
+                } else if (currentPiece.name === 'L') {
+                    // Lブロックの回転処理
+                    if (rows === 2) {
+                        // 通常のLから右回転
+                        newNumbers[0] = tempNumbers[1];
+                        newNumbers[1] = tempNumbers[3];
+                        newNumbers[2] = tempNumbers[2];
+                        newNumbers[3] = tempNumbers[0];
+                    } else {
+                        // 右回転から通常のLに
+                        newNumbers[0] = tempNumbers[3];
+                        newNumbers[1] = tempNumbers[0];
+                        newNumbers[2] = tempNumbers[2];
+                        newNumbers[3] = tempNumbers[1];
+                    }
+                } else if (currentPiece.name === 'J') {
+                    // Jブロックの回転処理
+                    if (rows === 2) {
+                        // 通常のJから右回転
+                        newNumbers[0] = tempNumbers[1];
+                        newNumbers[1] = tempNumbers[3];
+                        newNumbers[2] = tempNumbers[2];
+                        newNumbers[3] = tempNumbers[0];
+                    } else {
+                        // 右回転から通常のJに
+                        newNumbers[0] = tempNumbers[3];
+                        newNumbers[1] = tempNumbers[0];
+                        newNumbers[2] = tempNumbers[2];
+                        newNumbers[3] = tempNumbers[1];
+                    }
+                }
+                
+                // 形状を回転
+                for (let x = 0; x < cols; x++) {
+                    for (let y = rows - 1; y >= 0; y--) {
+                        if (originalShape[y][x]) {
+                            newShape[x][rows - 1 - y] = 1;
+                        }
+                    }
+                }
+                
+                // 衝突チェック
+                if (!collision(0, 0, newShape)) {
+                    currentPiece.shape = newShape;
+                    currentPiece.numbers = newNumbers;
+                    
+                    // 壁にめり込まないように調整
+                    if (currentPiece.x < 0) currentPiece.x = 0;
+                    if (currentPiece.x + newShape[0].length > COLS) {
+                        currentPiece.x = COLS - newShape[0].length;
+                    }
+                }
+            }
+            
+            // 下に移動
+            function moveDown() {
+                if (!movePiece(0, 1)) {
+                    lockPiece();
+                }
+            }
+            
+            // 一気に落下
+            function hardDrop() {
+                if (gameOver || isProcessing) return;
+                
+                while (movePiece(0, 1)) {}
+                lockPiece();
+            }
+            
+            // ボードを描画
+            function drawBoard() {
+                // ボードをクリア
+                gameBoard.innerHTML = '';
+                
+                // 固定されたブロックを描画
+                for (let y = 0; y < ROWS; y++) {
+                    for (let x = 0; x < COLS; x++) {
+                        if (board[y][x]) {
+                            const block = document.createElement('div');
+                            block.className = 'block';
+                            block.style.width = `${BLOCK_SIZE}px`;
+                            block.style.height = `${BLOCK_SIZE}px`;
+                            block.style.left = `${x * BLOCK_SIZE}px`;
+                            block.style.top = `${y * BLOCK_SIZE}px`;
+                            block.style.backgroundColor = board[y][x].color;
+                            // NaNを防ぐ
+                            const num = isNaN(board[y][x].number) ? 0 : board[y][x].number;
+                            block.textContent = num;
+                            gameBoard.appendChild(block);
+                        }
+                    }
+                }
+                
+                // 現在のミノを描画
+                if (currentPiece && !isProcessing) {
+                    for (let y = 0; y < currentPiece.shape.length; y++) {
+                        for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                            if (currentPiece.shape[y][x]) {
+                                const blockY = currentPiece.y + y;
+                                const blockX = currentPiece.x + x;
+                                
+                                if (blockY >= 0) {
+                                    const numIndex = y * currentPiece.shape[0].length + x;
+                                    let num = currentPiece.numbers[numIndex] % 10;
+                                    // NaNを防ぐ
+                                    num = isNaN(num) ? 0 : num;
+                                    
+                                    const block = document.createElement('div');
+                                    block.className = 'block';
+                                    block.style.width = `${BLOCK_SIZE}px`;
+                                    block.style.height = `${BLOCK_SIZE}px`;
+                                    block.style.left = `${blockX * BLOCK_SIZE}px`;
+                                    block.style.top = `${blockY * BLOCK_SIZE}px`;
+                                    block.style.backgroundColor = COLORS[num];
+                                    block.style.opacity = '0.8';
+                                    block.textContent = num;
+                                    gameBoard.appendChild(block);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 次のミノを描画
+            function drawNextPiece() {
+                nextPieceElement.innerHTML = '';
+                
+                if (nextPiece) {
+                    const container = document.createElement('div');
+                    container.style.width = `${nextPiece.shape[0].length * BLOCK_SIZE / 2}px`;
+                    container.style.height = `${nextPiece.shape.length * BLOCK_SIZE / 2}px`;
+                    container.style.position = 'relative';
+                    
+                    for (let y = 0; y < nextPiece.shape.length; y++) {
+                        for (let x = 0; x < nextPiece.shape[y].length; x++) {
+                            if (nextPiece.shape[y][x]) {
+                                const numIndex = y * nextPiece.shape[0].length + x;
+                                let num = nextPiece.numbers[numIndex] % 10;
+                                // NaNを防ぐ
+                                num = isNaN(num) ? 0 : num;
+                                
+                                const block = document.createElement('div');
+                                block.className = 'block';
+                                block.style.width = `${BLOCK_SIZE / 2}px`;
+                                block.style.height = `${BLOCK_SIZE / 2}px`;
+                                block.style.left = `${x * BLOCK_SIZE / 2}px`;
+                                block.style.top = `${y * BLOCK_SIZE / 2}px`;
+                                block.style.backgroundColor = COLORS[num];
+                                block.style.fontSize = '0.7rem';
+                                block.textContent = num;
+                                container.appendChild(block);
+                            }
+                        }
+                    }
+                    
+                    nextPieceElement.appendChild(container);
+                }
+            }
+            
+            // スコアを更新
+            function updateScore() {
+                scoreElement.textContent = score;
+                levelElement.textContent = level;
+                
+                // レベルアップ (スコアが500点ごとにレベルアップ)
+                const newLevel = Math.floor(score / 500) + 1;
+                if (newLevel > level) {
+                    level = newLevel;
+                    dropInterval = Math.max(100, 1000 - (level - 1) * 100); // レベルが上がるごとに速くなる
+                }
+            }
+            
+            // イベントリスナー
+            document.getElementById('left').addEventListener('click', () => movePiece(-1, 0));
+            document.getElementById('right').addEventListener('click', () => movePiece(1, 0));
+            document.getElementById('down').addEventListener('click', () => moveDown());
+            document.getElementById('rotate').addEventListener('click', () => rotatePiece());
+            document.getElementById('drop').addEventListener('click', () => hardDrop());
+            document.getElementById('restart').addEventListener('click', () => init());
+            
+            // キーボードコントロール
+            document.addEventListener('keydown', (e) => {
+                if (gameOver || isProcessing) return;
+                
+                switch (e.key) {
+                    case 'ArrowLeft':
+                        movePiece(-1, 0);
+                        break;
+                    case 'ArrowRight':
+                        movePiece(1, 0);
+                        break;
+                    case 'ArrowDown':
+                        moveDown();
+                        break;
+                    case 'ArrowUp':
+                        rotatePiece();
+                        break;
+                    case ' ':
+                        hardDrop();
+                        break;
+                }
+            });
+            
+            // タッチコントロール
+            gameBoard.addEventListener('touchstart', (e) => {
+                if (gameOver || isProcessing) return;
+                
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+                e.preventDefault();
+            }, { passive: false });
+            
+            gameBoard.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+            }, { passive: false });
+            
+            gameBoard.addEventListener('touchend', (e) => {
+                if (gameOver || isProcessing) return;
+                
+                const touchEndX = e.changedTouches[0].clientX;
+                const touchEndY = e.changedTouches[0].clientY;
+                const diffX = touchEndX - touchStartX;
+                const diffY = touchEndY - touchStartY;
+                
+                // スワイプの閾値
+                const threshold = 30;
+                
+                // スワイプの方向を判定
+                if (Math.abs(diffX) > Math.abs(diffY)) {
+                    // 横方向のスワイプ
+                    if (diffX > threshold) {
+                        movePiece(1, 0); // 右
+                    } else if (diffX < -threshold) {
+                        movePiece(-1, 0); // 左
+                    }
+                } else {
+                    // 縦方向のスワイプ
+                    if (diffY > threshold) {
+                        hardDrop(); // 下 (一気に落下)
+                    } else if (diffY < -threshold) {
+                        rotatePiece(); // 上 (回転)
+                    } else {
+                        moveDown(); // タップ (通常落下)
+                    }
+                }
+                
+                e.preventDefault();
+            }, { passive: false });
+            
+            // ゲーム開始
+            init();
+        });
+    </script>
+<p style="border-radius: 8px; text-align: center; font-size: 12px; color: #fff; margin-top: 16px;position: fixed; left: 8px; bottom: 8px; z-index: 10; background: rgba(0, 0, 0, 0.8); padding: 4px 8px;">Made with <img src="https://enzostvs-deepsite.hf.space/logo.svg" alt="DeepSite Logo" style="width: 16px; height: 16px; vertical-align: middle;display:inline-block;margin-right:3px;filter:brightness(0) invert(1);"><a href="https://enzostvs-deepsite.hf.space" style="color: #fff;text-decoration: underline;" target="_blank" >DeepSite</a> - 🧬 <a href="https://enzostvs-deepsite.hf.space?remix=kngy123/tetris-with-number" style="color: #fff;text-decoration: underline;" target="_blank" >Remix</a></p></body>
+</html> 
