@@ -291,7 +291,9 @@
                 }
                 
                 // 横一列が揃っているかチェック
-                checkFullRows();
+                checkFullRows().then(() => {
+                    // checkMatchesの後に実行されるため、ここでは何もしない
+                });
                 
                 // 消去可能なブロックをチェック
                 checkMatches().then(() => {
@@ -303,6 +305,7 @@
             
             // 横一列が揃っているかチェック
             function checkFullRows() {
+                return new Promise(resolve => {
                 let rowsToClear = [];
                 
                 // 下から上にチェック
@@ -337,7 +340,11 @@
                     dropBlocksAfterClear(rowsToClear);
                     
                     // 消えた行を点滅させる
-                    flashRows(rowsToClear);
+                    flashRows(rowsToClear).then(() => {
+                        resolve();
+                    });
+                } else {
+                    resolve();
                 }
             }
             
@@ -364,24 +371,30 @@
             
             // 消えた行を点滅させる
             function flashRows(rows) {
-                // 一時的にボードをコピー
-                const tempBoard = JSON.parse(JSON.stringify(board));
-                
-                // 消えた行を一時的に非表示
-                for (const row of rows) {
-                    for (let x = 0; x < COLS; x++) {
-                        board[row][x] = 0;
+                return new Promise(resolve => {
+                    // 消えた行を点滅させる
+                    for (const row of rows) {
+                        for (let x = 0; x < COLS; x++) {
+                            if (board[row][x] && board[row][x].element) {
+                                board[row][x].element.classList.add('flash');
+                            }
+                        }
                     }
-                }
-                
-                // ボードを再描画
-                drawBoard();
-                
-                // 300ms後に元に戻す
-                setTimeout(() => {
-                    // 消えた行はそのまま空にする
-                    drawBoard();
-                }, 300);
+                    
+                    // 300ms後にDOM要素を削除
+                    setTimeout(() => {
+                        for (const row of rows) {
+                            for (let x = 0; x < COLS; x++) {
+                                if (board[row][x] && board[row][x].element) {
+                                    board[row][x].element.remove();
+                                }
+                                board[row][x] = 0; // ボードデータも削除
+                            }
+                        }
+                        drawBoard();
+                        resolve();
+                    }, 300);
+                });
             }
             
             // 合計が10になる隣接ブロックをチェック
@@ -482,18 +495,16 @@
             // マッチしたブロックを点滅させる
             function flashBlocks(blocks) {
                 return new Promise(resolve => {
-                // 一時的にボードをコピー
-                const tempBoard = JSON.parse(JSON.stringify(board));
+                
                 
                 // マッチしたブロックを一時的に非表示
                 for (const block of blocks) {
-                    if (board[block.y] && board[block.y][block.x]) {
-                        board[block.y][block.x] = 0;
+                    if (board[block.y] && board[block.y][block.x] && board[block.y][block.x].element) {
+                        board[block.y][block.x].element.classList.add('flash');
                     }
                 }
                 
-                // ボードを再描画
-                drawBoard();
+                
                 
                 // 300ms後に元に戻す
                 setTimeout(() => {
