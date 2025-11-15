@@ -269,9 +269,21 @@
                                 let num = currentPiece.numbers[numIndex] % 10;
                                 // NaNを防ぐ
                                 num = isNaN(num) ? 0 : num;
+                                // ブロックのDOM要素を作成し、ボードに保存
+                                const blockElement = document.createElement('div');
+                                blockElement.className = 'block';
+                                blockElement.style.width = `${BLOCK_SIZE}px`;
+                                blockElement.style.height = `${BLOCK_SIZE}px`;
+                                blockElement.style.left = `${boardX * BLOCK_SIZE}px`;
+                                blockElement.style.top = `${boardY * BLOCK_SIZE}px`;
+                                blockElement.style.backgroundColor = COLORS[num];
+                                blockElement.textContent = num;
+                                gameBoard.appendChild(blockElement);
+
                                 board[boardY][boardX] = {
                                     color: COLORS[num],
-                                    number: num
+                                    number: num,
+                                    element: blockElement // DOM要素を保存
                                 };
                             }
                         }
@@ -282,11 +294,11 @@
                 checkFullRows();
                 
                 // 消去可能なブロックをチェック
-                checkMatches();
-                
-                // 新しいミノを生成
-                generatePiece();
-                isProcessing = false;
+                checkMatches().then(() => {
+                    // 新しいミノを生成
+                    generatePiece();
+                    isProcessing = false;
+                });
             }
             
             // 横一列が揃っているかチェック
@@ -374,6 +386,7 @@
             
             // 合計が10になる隣接ブロックをチェック
             function checkMatches() {
+                return new Promise(resolve => {
                 const directions = [
                     { dx: 1, dy: 0 },  // 右
                     { dx: 0, dy: 1 },  // 下
@@ -420,26 +433,30 @@
                 
                 if (hasMatches) {
                     // マッチしたブロックを消去
-                    for (const block of matchedBlocks) {
-                        board[block.y][block.x] = 0;
-                    }
+                    // flashBlocks内でDOM要素を削除するため、ここではボードから削除しない
                     
                     // スコア加算
                     score += matchedBlocks.length * 10 * level;
                     updateScore();
                     
-                    // ブロックを落下させる
-                    dropBlocks();
-                    
                     // マッチしたブロックを点滅させる
-                    flashBlocks(matchedBlocks);
-                    
-                    // 再帰的にチェック (連鎖反応)
-                    setTimeout(() => {
-                        checkMatches();
-                    }, 500);
+                    flashBlocks(matchedBlocks).then(() => {
+                        // 実際にボードからブロックを削除
+                        for (const block of matchedBlocks) {
+                            board[block.y][block.x] = 0;
+                        }
+                        
+                        // ブロックを落下させる
+                        dropBlocks();
+                        
+                        // 落下後のボードを再描画
+                        drawBoard();
+                        
+                        // 再帰的にマッチをチェック
+                        checkMatches().then(resolve);
+                    });
                 } else {
-                    isProcessing = false;
+                    resolve();
                 }
             }
             
@@ -464,6 +481,7 @@
             
             // マッチしたブロックを点滅させる
             function flashBlocks(blocks) {
+                return new Promise(resolve => {
                 // 一時的にボードをコピー
                 const tempBoard = JSON.parse(JSON.stringify(board));
                 
@@ -479,13 +497,15 @@
                 
                 // 300ms後に元に戻す
                 setTimeout(() => {
-                    // マッチしたブロックを完全に削除
+                    // マッチしたブロックのDOM要素を削除
                     for (const block of blocks) {
-                        if (board[block.y] && board[block.y][block.x]) {
-                            board[block.y][block.x] = 0;
+                        const element = board[block.y][block.x].element;
+                        if (element) {
+                            element.remove();
                         }
                     }
-                    drawBoard();
+                    // ボードのデータはcheckMatchesで削除されるため、ここではDOM要素のみ削除
+                    resolve();
                 }, 300);
             }
             
@@ -504,143 +524,83 @@
             // ミノを回転
             function rotatePiece() {
                 if (gameOver || isProcessing) return;
-                
+
                 const originalShape = currentPiece.shape;
-                const originalNumbers = currentPiece.numbers;
                 
                 // Oブロック（正方形）は回転しない
                 if (currentPiece.name === 'O') {
                     return;
                 }
-                
+
                 // 新しい形状を計算 (時計回りに90度回転)
                 const rows = originalShape.length;
                 const cols = originalShape[0].length;
                 const newShape = Array(cols).fill().map(() => Array(rows).fill(0));
-                
-                // 数字を保持するための一時配列
-                const tempNumbers = [];
-                
-                // 元の形状から数字を収集
+
                 for (let y = 0; y < rows; y++) {
                     for (let x = 0; x < cols; x++) {
-                        if (originalShape[y][x]) {
-                            const numIndex = y * cols + x;
-                            tempNumbers.push(originalNumbers[numIndex]);
-                        }
+                        newShape[x][rows - 1 - y] = originalShape[y][x];
                     }
                 }
-                
-                // 新しい形状を作成
-                const newNumbers = [];
-                
-                // 数字の配置を合理的に変更
-                if (currentPiece.name === 'I') {
-                    // Iブロックの回転処理
-                    if (rows === 1) {
-                        // 横から縦に回転
-                        newNumbers[0] = tempNumbers[0];
-                        newNumbers[1] = tempNumbers[1];
-                        newNumbers[2] = tempNumbers[2];
-                        newNumbers[3] = tempNumbers[3];
-                    } else {
-                        // 縦から横に回転
-                        newNumbers[0] = tempNumbers[0];
-                        newNumbers[1] = tempNumbers[1];
-                        newNumbers[2] = tempNumbers[2];
-                        newNumbers[3] = tempNumbers[3];
-                    }
-                } else if (currentPiece.name === 'T') {
-                    // Tブロックの回転処理
-                    if (rows === 2) {
-                        // 通常のTから右回転
-                        newNumbers[0] = tempNumbers[1];
-                        newNumbers[1] = tempNumbers[3];
-                        newNumbers[2] = tempNumbers[2];
-                        newNumbers[3] = tempNumbers[0];
-                    } else {
-                        // 右回転から通常のTに
-                        newNumbers[0] = tempNumbers[3];
-                        newNumbers[1] = tempNumbers[0];
-                        newNumbers[2] = tempNumbers[2];
-                        newNumbers[3] = tempNumbers[1];
-                    }
-                } else if (currentPiece.name === 'S') {
-                    // Sブロックの回転処理
-                    if (rows === 2) {
-                        // 通常のSから右回転
-                        newNumbers[0] = tempNumbers[1];
-                        newNumbers[1] = tempNumbers[3];
-                        newNumbers[2] = tempNumbers[0];
-                        newNumbers[3] = tempNumbers[2];
-                    } else {
-                        // 右回転から通常のSに
-                        newNumbers[0] = tempNumbers[2];
-                        newNumbers[1] = tempNumbers[0];
-                        newNumbers[2] = tempNumbers[3];
-                        newNumbers[3] = tempNumbers[1];
-                    }
-                } else if (currentPiece.name === 'Z') {
-                    // Zブロックの回転処理
-                    if (rows === 2) {
-                        // 通常のZから右回転
-                        newNumbers[0] = tempNumbers[1];
-                        newNumbers[1] = tempNumbers[3];
-                        newNumbers[2] = tempNumbers[0];
-                        newNumbers[3] = tempNumbers[2];
-                    } else {
-                        // 右回転から通常のZに
-                        newNumbers[0] = tempNumbers[2];
-                        newNumbers[1] = tempNumbers[0];
-                        newNumbers[2] = tempNumbers[3];
-                        newNumbers[3] = tempNumbers[1];
-                    }
-                } else if (currentPiece.name === 'L') {
-                    // Lブロックの回転処理
-                    if (rows === 2) {
-                        // 通常のLから右回転
-                        newNumbers[0] = tempNumbers[1];
-                        newNumbers[1] = tempNumbers[3];
-                        newNumbers[2] = tempNumbers[2];
-                        newNumbers[3] = tempNumbers[0];
-                    } else {
-                        // 右回転から通常のLに
-                        newNumbers[0] = tempNumbers[3];
-                        newNumbers[1] = tempNumbers[0];
-                        newNumbers[2] = tempNumbers[2];
-                        newNumbers[3] = tempNumbers[1];
-                    }
-                } else if (currentPiece.name === 'J') {
-                    // Jブロックの回転処理
-                    if (rows === 2) {
-                        // 通常のJから右回転
-                        newNumbers[0] = tempNumbers[1];
-                        newNumbers[1] = tempNumbers[3];
-                        newNumbers[2] = tempNumbers[2];
-                        newNumbers[3] = tempNumbers[0];
-                    } else {
-                        // 右回転から通常のJに
-                        newNumbers[0] = tempNumbers[3];
-                        newNumbers[1] = tempNumbers[0];
-                        newNumbers[2] = tempNumbers[2];
-                        newNumbers[3] = tempNumbers[1];
-                    }
-                }
-                
-                // 形状を回転
-                for (let x = 0; x < cols; x++) {
-                    for (let y = rows - 1; y >= 0; y--) {
-                        if (originalShape[y][x]) {
-                            newShape[x][rows - 1 - y] = 1;
-                        }
-                    }
-                }
-                
+
                 // 衝突チェック
                 if (!collision(0, 0, newShape)) {
                     currentPiece.shape = newShape;
-                    currentPiece.numbers = newNumbers;
+                    // 数字の回転ロジックを実装
+                    const originalNumbers = currentPiece.numbers;
+                    const newNumbers = [];
                     
+                    // 元の形状のブロック位置と数字の対応を一時的に保持
+                    const blockData = [];
+                    let numberIndex = 0;
+                    for (let y = 0; y < rows; y++) {
+                        for (let x = 0; x < cols; x++) {
+                            if (originalShape[y][x]) {
+                                blockData.push({
+                                    x: x,
+                                    y: y,
+                                    number: originalNumbers[numberIndex]
+                                });
+                                numberIndex++;
+                            }
+                        }
+                    }
+                    
+                    // 回転後の新しい座標を計算し、数字を新しい配列に格納
+                    const newBlockData = blockData.map(data => {
+                        // 時計回りに90度回転: (x, y) -> (rows - 1 - y, x)
+                        const newX = rows - 1 - data.y;
+                        const newY = data.x;
+                        return {
+                            x: newX,
+                            y: newY,
+                            number: data.number
+                        };
+                    });
+                    
+                    // 新しい形状のサイズに合わせて新しい数字配列を作成
+                    const newRows = newShape.length;
+                    const newCols = newShape[0].length;
+                    
+                    // 新しい形状のブロック位置に数字を配置
+                    let dataIndex = 0;
+                    for (let y = 0; y < newRows; y++) {
+                        for (let x = 0; x < newCols; x++) {
+                            if (newShape[y][x]) {
+                                // 新しい座標 (x, y) に対応する数字を探す
+                                const found = newBlockData.find(d => d.x === x && d.y === y);
+                                if (found) {
+                                    newNumbers.push(found.number);
+                                } else {
+                                    // 見つからない場合はエラーだが、念のため0
+                                    newNumbers.push(0);
+                                }
+                            }
+                        }
+                    }
+                    
+                    currentPiece.numbers = newNumbers;
+
                     // 壁にめり込まないように調整
                     if (currentPiece.x < 0) currentPiece.x = 0;
                     if (currentPiece.x + newShape[0].length > COLS) {
